@@ -307,7 +307,7 @@ class WorkflowAgentRuntimeRequestBuilder:
                 metadata=metadata,
             )
         )
-        redacted = cast(dict[str, Any], redact_for_agent_backend_log(request))
+        redacted = redact_for_agent_backend_log(request, secret_env_names=inline_secret_env_names(agent_soul))
         return WorkflowAgentRuntimeRequest(
             request=request,
             redacted_request=redacted,
@@ -840,6 +840,31 @@ def build_shell_layer_config(agent_soul: AgentSoulConfig) -> DifyShellLayerConfi
             secret for secret in (_shell_secret_ref(item) for item in agent_soul.env.secret_refs) if secret is not None
         ],
     )
+
+
+def inline_secret_env_names(agent_soul: AgentSoulConfig) -> frozenset[str]:
+    """Names of shell env vars whose secret value is inlined into the run request.
+
+    ``build_shell_layer_config`` sends an inline secret value as a plain env var because the
+    agent-backend secret ref schema only accepts short backend-managed reference IDs. Those
+    entries only carry ``name`` and ``value``, so logging redaction needs the names to mask the
+    values instead of relying on key-name matching.
+    """
+    names = _secret_env_names(agent_soul.env.secret_refs)
+    for tool in agent_soul.tools.cli_tools:
+        if _cli_tool_enabled(tool):
+            names.update(_secret_env_names(tool.env.secret_refs))
+    return frozenset(names)
+
+
+def _secret_env_names(secret_refs: Sequence[object]) -> set[str]:
+    names: set[str] = set()
+    for item in secret_refs:
+        if _has_secret_value(item):
+            name = _name_from_mapping(_plain_mapping(item))
+            if name is not None:
+                names.add(name)
+    return names
 
 
 def build_knowledge_layer_config(

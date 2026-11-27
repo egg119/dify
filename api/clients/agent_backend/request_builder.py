@@ -11,8 +11,8 @@ fields. The wire request contains current Config and optional state-only snapsho
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from typing import ClassVar, Literal
+from collections.abc import Collection, Mapping
+from typing import Any, ClassVar, Literal, overload
 
 from dify_agent.layers.config import DifyConfigLayerConfig
 from dify_agent.layers.dify_core_tools import DifyCoreToolsLayerConfig
@@ -592,24 +592,41 @@ class AgentBackendRunRequestBuilder:
 _SENSITIVE_KEY_PARTS = ("secret", "credential", "token", "password", "api_key", "base64_data")
 
 
-def redact_for_agent_backend_log(value: object) -> object:
-    """Return a JSON-like copy with credential-bearing keys redacted for logs/tests."""
+@overload
+def redact_for_agent_backend_log(value: BaseModel, *, secret_env_names: Collection[str] = ()) -> dict[str, Any]: ...
+
+
+@overload
+def redact_for_agent_backend_log(value: object, *, secret_env_names: Collection[str] = ()) -> object: ...
+
+
+def redact_for_agent_backend_log(value: object, *, secret_env_names: Collection[str] = ()) -> object:
+    """Return a JSON-like copy with credential-bearing keys redacted for logs/tests.
+
+    ``secret_env_names`` names the shell env vars whose secret value was inlined into the
+    request: those entries only carry ``name`` and ``value`` keys, so key-name matching alone
+    cannot tell them apart from a regular env var.
+    """
     if isinstance(value, BaseModel):
-        return redact_for_agent_backend_log(value.model_dump(mode="json", warnings=False))
+        return redact_for_agent_backend_log(
+            value.model_dump(mode="json", warnings=False), secret_env_names=secret_env_names
+        )
     if isinstance(value, dict):
         redacted: dict[object, object] = {}
         is_multimodal_file = value.get("type") == "image" and "filename" in value and "mime_type" in value
+        is_secret_env_var = isinstance(value.get("name"), str) and value["name"] in secret_env_names
         for key, item in value.items():
             key_text = str(key).lower()
             if (
                 any(part in key_text for part in _SENSITIVE_KEY_PARTS)
                 or (is_multimodal_file and key_text == "url")
+                or (is_secret_env_var and key_text == "value")
                 or (key_text == "tracing" and item is not None)
             ):
                 redacted[key] = "[REDACTED]"
             else:
-                redacted[key] = redact_for_agent_backend_log(item)
+                redacted[key] = redact_for_agent_backend_log(item, secret_env_names=secret_env_names)
         return redacted
     if isinstance(value, list):
-        return [redact_for_agent_backend_log(item) for item in value]
+        return [redact_for_agent_backend_log(item, secret_env_names=secret_env_names) for item in value]
     return value

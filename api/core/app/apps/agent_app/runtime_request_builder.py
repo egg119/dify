@@ -53,6 +53,7 @@ from core.workflow.nodes.agent_v2.runtime_request_builder import (
     build_config_layer_config,
     build_knowledge_layer_config,
     build_shell_layer_config,
+    inline_secret_env_names,
     load_runtime_agent_skill_configs,
 )
 from core.workflow.nodes.agent_v2.tool_snapshot import (
@@ -232,7 +233,7 @@ class AgentAppRuntimeRequestBuilder:
                 metadata=metadata,
             )
         )
-        redacted = cast(dict[str, Any], redact_for_agent_backend_log(request))
+        redacted = redact_for_agent_backend_log(request, secret_env_names=inline_secret_env_names(agent_soul))
         return AgentAppRuntimeRequest(
             request=request,
             redacted_request=redacted,

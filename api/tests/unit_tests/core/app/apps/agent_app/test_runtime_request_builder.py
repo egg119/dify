@@ -866,6 +866,41 @@ class TestAgentAppRuntimeRequestBuilder:
             "shell_interrupt",
         ]
 
+    def test_redacted_request_masks_inline_secret_env_values(self, monkeypatch: pytest.MonkeyPatch):
+        apply_config_overrides(monkeypatch, AGENT_SHELL_ENABLED=True)
+        soul = AgentSoulConfig.model_validate(
+            {
+                "model": {
+                    "plugin_id": "langgenius/openai",
+                    "model_provider": "langgenius/openai/openai",
+                    "model": "gpt-4o-mini",
+                },
+                "env": {
+                    "variables": [{"name": "PROJECT_NAME", "value": "demo"}],
+                    "secret_refs": [{"name": "DEMO_SECRET", "value": "dummy-value-123"}],
+                },
+                "sandbox": {"provider": "independent", "config": {"cpu": 2}},
+            }
+        )
+        builder = AgentAppRuntimeRequestBuilder(
+            dify_tools_builder=_NoToolsBuilder(),  # type: ignore[arg-type]
+        )
+
+        result = builder.build(_ctx(soul))
+
+        request = result.request.model_dump(mode="json")
+        shell_request = {layer["name"]: layer for layer in request["composition"]["layers"]}[DIFY_SHELL_LAYER_ID][
+            "config"
+        ]
+        assert {"name": "DEMO_SECRET", "value": "dummy-value-123"} in shell_request["env"]
+
+        redacted = result.redacted_request
+        shell_redacted = {layer["name"]: layer for layer in redacted["composition"]["layers"]}[DIFY_SHELL_LAYER_ID][
+            "config"
+        ]
+        assert {"name": "DEMO_SECRET", "value": "[REDACTED]"} in shell_redacted["env"]
+        assert {"name": "PROJECT_NAME", "value": "demo"} in shell_redacted["env"]
+
     @pytest.mark.parametrize(
         ("inputs", "expected_block"),
         [
